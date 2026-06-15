@@ -1,3 +1,39 @@
+// Extracts a balanced bracket/brace section starting at startIndex (which
+// must point at the opening character).
+function extractBalanced(str, startIndex, openChar, closeChar) {
+  let depth = 0;
+  let inString = false;
+  let escapeNext = false;
+
+  for (let i = startIndex; i < str.length; i++) {
+    const ch = str[i];
+
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+
+    if (ch === '\\') {
+      escapeNext = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (ch === openChar) depth++;
+    else if (ch === closeChar) {
+      depth--;
+      if (depth === 0) return str.slice(startIndex, i + 1);
+    }
+  }
+  return null;
+}
+
 export default async function handler(req, res) {
   const { videoId, lang } = req.query;
 
@@ -6,33 +42,55 @@ export default async function handler(req, res) {
   }
 
   try {
-    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    const videoUrl = `https://www.youtube.com/watch?v=${videoId}&hl=en`;
 
     const pageRes = await fetch(videoUrl, {
       headers: {
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9'
+        'Accept-Language': 'en-US,en;q=0.9',
+        // Bypass YouTube's EU/consent interstitial page which otherwise
+        // replaces the normal watch page (and hides captionTracks).
+        Cookie: 'CONSENT=YES+cb.20210328-17-p0.en+FX+410; SOCS=CAI'
       }
     });
 
     if (!pageRes.ok) {
-      return res.status(502).json({ error: 'Could not load YouTube page' });
+      return res
+        .status(502)
+        .json({ error: 'Could not load YouTube page', status: pageRes.status });
     }
 
     const html = await pageRes.text();
 
-    const captionsMatch = html.match(/"captionTracks":(\[[^\]]*\])/);
+    const markerIndex = html.indexOf('"captionTracks":');
 
-    if (!captionsMatch) {
-      return res.status(404).json({
-        error: 'No captions/transcript available for this video'
-      });
+    if (markerIndex === -1) {
+      if (
+        html.includes('Sign in to confirm') ||
+        html.includes('consent.youtube.com') ||
+        html.includes('Our systems have detected unusual traffic')
+      ) {
+        return res.status(503).json({
+          error:
+            'YouTube is currently blocking requests from this server. Please try again in a few minutes.'
+        });
+      }
+      return res
+        .status(404)
+        .json({ error: 'No captions/transcript available for this video' });
+    }
+
+    const arrayStart = html.indexOf('[', markerIndex);
+    const arrayStr = extractBalanced(html, arrayStart, '[', ']');
+
+    if (!arrayStr) {
+      return res.status(500).json({ error: 'Failed to parse caption data' });
     }
 
     let captionTracks;
     try {
-      captionTracks = JSON.parse(captionsMatch[1]);
+      captionTracks = JSON.parse(arrayStr);
     } catch (e) {
       return res.status(500).json({ error: 'Failed to parse caption data' });
     }
@@ -50,7 +108,13 @@ export default async function handler(req, res) {
 
     const baseUrl = track.baseUrl.replace(/\\u0026/g, '&');
 
-    const transcriptRes = await fetch(`${baseUrl}&fmt=json3`);
+    const transcriptRes = await fetch(`${baseUrl}&fmt=json3`, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+      }
+    });
+
     if (!transcriptRes.ok) {
       return res.status(502).json({ error: 'Could not fetch transcript data' });
     }
@@ -70,6 +134,10 @@ export default async function handler(req, res) {
         start: (event.tStartMs || 0) / 1000,
         text
       });
+    }
+
+    if (segments.length === 0) {
+      return res.status(404).json({ error: 'Transcript was empty for this video' });
     }
 
     res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate');
