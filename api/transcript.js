@@ -1,38 +1,4 @@
-// Extracts a balanced bracket/brace section starting at startIndex (which
-// must point at the opening character).
-function extractBalanced(str, startIndex, openChar, closeChar) {
-  let depth = 0;
-  let inString = false;
-  let escapeNext = false;
-
-  for (let i = startIndex; i < str.length; i++) {
-    const ch = str[i];
-
-    if (escapeNext) {
-      escapeNext = false;
-      continue;
-    }
-
-    if (ch === '\\') {
-      escapeNext = true;
-      continue;
-    }
-
-    if (ch === '"') {
-      inString = !inString;
-      continue;
-    }
-
-    if (inString) continue;
-
-    if (ch === openChar) depth++;
-    else if (ch === closeChar) {
-      depth--;
-      if (depth === 0) return str.slice(startIndex, i + 1);
-    }
-  }
-  return null;
-}
+const INNERTUBE_KEY = 'AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w';
 
 export default async function handler(req, res) {
   const { videoId, lang } = req.query;
@@ -42,38 +8,45 @@ export default async function handler(req, res) {
   }
 
   try {
-    const videoUrl = `https://www.youtube.com/watch?v=${videoId}&hl=en`;
-
-    const pageRes = await fetch(videoUrl, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
-        // Bypass YouTube's EU/consent interstitial page which otherwise
-        // replaces the normal watch page (and hides captionTracks).
-        Cookie: 'CONSENT=YES+cb.20210328-17-p0.en+FX+410; SOCS=CAI'
+    const ytRes = await fetch(
+      `https://www.youtube.com/youtubei/v1/player?key=${INNERTUBE_KEY}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 14) gzip'
+        },
+        body: JSON.stringify({
+          videoId,
+          context: {
+            client: {
+              clientName: 'ANDROID',
+              clientVersion: '19.09.37',
+              androidSdkVersion: 34,
+              hl: 'en',
+              gl: 'US'
+            }
+          }
+        })
       }
-    });
+    );
 
-    if (!pageRes.ok) {
+    if (!ytRes.ok) {
       return res
         .status(502)
-        .json({ error: 'Could not load YouTube page', status: pageRes.status });
+        .json({ error: 'Could not reach YouTube API', status: ytRes.status });
     }
 
-    const html = await pageRes.text();
+    const data = await ytRes.json();
 
-    const markerIndex = html.indexOf('"captionTracks":');
+    const captionTracks =
+      data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
 
-    if (markerIndex === -1) {
-      if (
-        html.includes('Sign in to confirm') ||
-        html.includes('consent.youtube.com') ||
-        html.includes('Our systems have detected unusual traffic')
-      ) {
-        return res.status(503).json({
-          error:
-            'YouTube is currently blocking requests from this server. Please try again in a few minutes.'
+    if (!captionTracks || captionTracks.length === 0) {
+      const playability = data?.playabilityStatus?.status;
+      if (playability && playability !== 'OK') {
+        return res.status(404).json({
+          error: `Video unavailable (${playability})`
         });
       }
       return res
@@ -81,34 +54,13 @@ export default async function handler(req, res) {
         .json({ error: 'No captions/transcript available for this video' });
     }
 
-    const arrayStart = html.indexOf('[', markerIndex);
-    const arrayStr = extractBalanced(html, arrayStart, '[', ']');
-
-    if (!arrayStr) {
-      return res.status(500).json({ error: 'Failed to parse caption data' });
-    }
-
-    let captionTracks;
-    try {
-      captionTracks = JSON.parse(arrayStr);
-    } catch (e) {
-      return res.status(500).json({ error: 'Failed to parse caption data' });
-    }
-
-    if (!captionTracks || captionTracks.length === 0) {
-      return res.status(404).json({ error: 'No captions available' });
-    }
-
-    // Pick requested language, else English, else first available
     let track =
       captionTracks.find((t) => t.languageCode === lang) ||
       captionTracks.find((t) => t.languageCode === 'en') ||
       captionTracks.find((t) => t.languageCode?.startsWith('en')) ||
       captionTracks[0];
 
-    const baseUrl = track.baseUrl.replace(/\\u0026/g, '&');
-
-    const transcriptRes = await fetch(`${baseUrl}&fmt=json3`, {
+    const transcriptRes = await fetch(`${track.baseUrl}&fmt=json3`, {
       headers: {
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
