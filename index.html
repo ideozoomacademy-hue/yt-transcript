@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YouTube Transcript Extractor | YT Transcript</title>
+<meta name="description" content="Extract and download the transcript of any YouTube video instantly. Free YouTube transcript generator tool.">
+<style>
+  :root{
+    --bg:#f7f7f7;
+    --card:#ffffff;
+    --primary:#cc0000;
+    --primary-dark:#a30000;
+    --text:#222222;
+    --muted:#666666;
+    --border:#e0e0e0;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background:var(--bg);
+    color:var(--text);
+  }
+  header{
+    background:var(--card);
+    border-bottom:1px solid var(--border);
+    padding:18px 16px;
+    text-align:center;
+  }
+  header h1{
+    margin:0;
+    font-size:1.4rem;
+    color:var(--primary);
+  }
+  header p{
+    margin:6px 0 0;
+    color:var(--muted);
+    font-size:0.9rem;
+  }
+  main{
+    max-width:760px;
+    margin:0 auto;
+    padding:20px 16px 60px;
+  }
+  .card{
+    background:var(--card);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:18px;
+    margin-bottom:18px;
+  }
+  .input-row{
+    display:flex;
+    gap:10px;
+    flex-wrap:wrap;
+  }
+  input[type="text"]{
+    flex:1;
+    min-width:200px;
+    padding:12px 14px;
+    font-size:1rem;
+    border:1px solid var(--border);
+    border-radius:8px;
+    outline:none;
+  }
+  input[type="text"]:focus{
+    border-color:var(--primary);
+  }
+  button{
+    padding:12px 20px;
+    font-size:1rem;
+    border:none;
+    border-radius:8px;
+    background:var(--primary);
+    color:#fff;
+    cursor:pointer;
+    font-weight:600;
+    transition:background .2s;
+  }
+  button:hover{ background:var(--primary-dark); }
+  button:disabled{
+    background:#ccc;
+    cursor:not-allowed;
+  }
+  .btn-secondary{
+    background:#fff;
+    color:var(--primary);
+    border:1px solid var(--primary);
+  }
+  .btn-secondary:hover{ background:#fdecec; }
+  .toolbar{
+    display:flex;
+    gap:10px;
+    flex-wrap:wrap;
+    margin-top:14px;
+    align-items:center;
+  }
+  select{
+    padding:10px;
+    border-radius:8px;
+    border:1px solid var(--border);
+    font-size:0.95rem;
+  }
+  .status{
+    margin-top:12px;
+    font-size:0.92rem;
+    color:var(--muted);
+  }
+  .status.error{ color:var(--primary); }
+  .transcript-box{
+    margin-top:14px;
+    max-height:60vh;
+    overflow-y:auto;
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:12px;
+    background:#fafafa;
+    line-height:1.7;
+    font-size:0.97rem;
+  }
+  .seg{
+    margin-bottom:6px;
+  }
+  .seg .time{
+    color:var(--primary);
+    font-weight:600;
+    margin-right:6px;
+    font-size:0.85rem;
+  }
+  .toggle-row{
+    margin-top:10px;
+    display:flex;
+    align-items:center;
+    gap:8px;
+    font-size:0.9rem;
+    color:var(--muted);
+  }
+  footer{
+    text-align:center;
+    padding:16px;
+    color:var(--muted);
+    font-size:0.85rem;
+  }
+  .lang-bilingual{
+    color:var(--muted);
+    font-size:0.85rem;
+  }
+  @media (max-width:480px){
+    header h1{ font-size:1.2rem; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>YouTube Transcript Extractor</h1>
+  <p>Paste a YouTube link and get the full transcript instantly</p>
+  <p class="lang-bilingual">யூடியூப் வீடியோ லிங்க் கொடுங்கள், டிரான்ஸ்கிரிப்ட் உடனடியாக கிடைக்கும்</p>
+</header>
+
+<main>
+  <div class="card">
+    <div class="input-row">
+      <input type="text" id="urlInput" placeholder="Paste YouTube URL or video ID here">
+      <button id="fetchBtn">Get Transcript</button>
+    </div>
+    <div class="status" id="status"></div>
+
+    <div class="toolbar" id="toolbar" style="display:none;">
+      <label for="langSelect" style="font-size:0.9rem;color:var(--muted);">Language:</label>
+      <select id="langSelect"></select>
+      <button class="btn-secondary" id="copyBtn">Copy Text</button>
+      <button class="btn-secondary" id="downloadBtn">Download .txt</button>
+    </div>
+
+    <div class="toggle-row" id="toggleRow" style="display:none;">
+      <input type="checkbox" id="timestampToggle">
+      <label for="timestampToggle">Show timestamps</label>
+    </div>
+
+    <div class="transcript-box" id="transcriptBox" style="display:none;"></div>
+  </div>
+</main>
+
+<footer>
+  Personal tool · For educational and reference use
+</footer>
+
+<script>
+const urlInput = document.getElementById('urlInput');
+const fetchBtn = document.getElementById('fetchBtn');
+const statusEl = document.getElementById('status');
+const toolbar = document.getElementById('toolbar');
+const langSelect = document.getElementById('langSelect');
+const copyBtn = document.getElementById('copyBtn');
+const downloadBtn = document.getElementById('downloadBtn');
+const transcriptBox = document.getElementById('transcriptBox');
+const toggleRow = document.getElementById('toggleRow');
+const timestampToggle = document.getElementById('timestampToggle');
+
+let currentSegments = [];
+let currentVideoId = '';
+
+function extractVideoId(input) {
+  input = input.trim();
+  // already a plain ID (11 chars, no special url chars)
+  if (/^[a-zA-Z0-9_-]{11}$/.test(input)) return input;
+
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=)([a-zA-Z0-9_-]{11})/,
+    /(?:youtu\.be\/)([a-zA-Z0-9_-]{11})/,
+    /(?:youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
+    /(?:youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/
+  ];
+  for (const p of patterns) {
+    const m = input.match(p);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+function formatTime(seconds) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  const pad = (n) => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+function renderTranscript() {
+  const showTime = timestampToggle.checked;
+  transcriptBox.innerHTML = currentSegments.map(seg => {
+    if (showTime) {
+      return `<div class="seg"><span class="time">[${formatTime(seg.start)}]</span>${escapeHtml(seg.text)}</div>`;
+    }
+    return `<span>${escapeHtml(seg.text)} </span>`;
+  }).join('');
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function getPlainText(showTime) {
+  return currentSegments.map(seg => {
+    return showTime ? `[${formatTime(seg.start)}] ${seg.text}` : seg.text;
+  }).join(showTime ? '\n' : ' ');
+}
+
+async function fetchTranscript(videoId, lang) {
+  statusEl.className = 'status';
+  statusEl.textContent = 'Fetching transcript…';
+  toolbar.style.display = 'none';
+  toggleRow.style.display = 'none';
+  transcriptBox.style.display = 'none';
+  fetchBtn.disabled = true;
+
+  try {
+    let url = `/api/transcript?videoId=${videoId}`;
+    if (lang) url += `&lang=${lang}`;
+
+    const res = await fetch(url);
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to fetch transcript');
+    }
+
+    currentSegments = data.segments;
+    currentVideoId = videoId;
+
+    // Populate language dropdown
+    langSelect.innerHTML = '';
+    data.availableLanguages.forEach(l => {
+      const opt = document.createElement('option');
+      opt.value = l.code;
+      opt.textContent = l.name;
+      if (l.code === data.language) opt.selected = true;
+      langSelect.appendChild(opt);
+    });
+
+    statusEl.textContent = `Transcript loaded (${data.languageName}) — ${data.segments.length} segments`;
+    toolbar.style.display = 'flex';
+    toggleRow.style.display = 'flex';
+    transcriptBox.style.display = 'block';
+    renderTranscript();
+  } catch (err) {
+    statusEl.className = 'status error';
+    statusEl.textContent = err.message || 'Something went wrong';
+  } finally {
+    fetchBtn.disabled = false;
+  }
+}
+
+fetchBtn.addEventListener('click', () => {
+  const videoId = extractVideoId(urlInput.value);
+  if (!videoId) {
+    statusEl.className = 'status error';
+    statusEl.textContent = 'Please enter a valid YouTube URL or video ID';
+    return;
+  }
+  fetchTranscript(videoId);
+});
+
+urlInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') fetchBtn.click();
+});
+
+langSelect.addEventListener('change', () => {
+  if (currentVideoId) fetchTranscript(currentVideoId, langSelect.value);
+});
+
+timestampToggle.addEventListener('change', renderTranscript);
+
+copyBtn.addEventListener('click', async () => {
+  const text = getPlainText(timestampToggle.checked);
+  try {
+    await navigator.clipboard.writeText(text);
+    copyBtn.textContent = 'Copied!';
+    setTimeout(() => copyBtn.textContent = 'Copy Text', 1500);
+  } catch {
+    alert('Could not copy. Please select and copy manually.');
+  }
+});
+
+downloadBtn.addEventListener('click', () => {
+  const text = getPlainText(timestampToggle.checked);
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `transcript-${currentVideoId}.txt`;
+  a.click();
+});
+</script>
+
+</body>
+</html>
